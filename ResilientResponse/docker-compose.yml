@@ -1,0 +1,351 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# ResilientResponse — Phase 12 (Monitoring + Observability)
+# Multiple instances: hospital-primary/backup, resource-primary/backup
+# All services self-register with the Service Registry on startup.
+#
+# DEVELOPMENT SETUP NOTE:
+# This file uses .env.example files directly as the runtime environment source.
+# For any non-local deployment, copy each .env.example to .env, update the
+# secrets (JWT_SECRET, ADMIN_PASSWORD), then change env_file references to
+# the .env files before deploying.
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── Infrastructure ───────────────────────────────────────────────────────────
+  mongo:
+    image: mongo:7.0
+    container_name: resilientresponse-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+      - ./infrastructure/mongo/init.js:/docker-entrypoint-initdb.d/init.js:ro
+    environment:
+      MONGO_INITDB_DATABASE: resilientresponse
+    networks:
+      - resilientresponse-net
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Service Registry (must start before other services) ──────────────────────
+  service-registry:
+    build: ./service-registry
+    container_name: resilientresponse-service-registry
+    restart: unless-stopped
+    ports:
+      - "8008:8008"
+    environment:
+      PORT: 8008
+      CORS_ORIGINS: "http://localhost:3000"
+      MONGO_URI: "mongodb://mongo:27017/resilientresponse"
+      MONGODB_DB: resilientresponse
+      HEALTH_CHECK_INTERVAL_SECONDS: 15
+      HEALTH_CHECK_TIMEOUT_SECONDS: 5
+      FAILURE_THRESHOLD: 2
+      RECOVERY_THRESHOLD: 3
+      DEGRADED_RESPONSE_MS: 2000
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks:
+      - resilientresponse-net
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8008/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── API Gateway ───────────────────────────────────────────────────────────────
+  api-gateway:
+    build: ./api-gateway
+    container_name: resilientresponse-api-gateway
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./api-gateway/.env.example
+    depends_on:
+      mongo:
+        condition: service_healthy
+      service-registry:
+        condition: service_healthy
+      orchestrator:
+        condition: service_started
+      alert-service:
+        condition: service_started
+      classification-service:
+        condition: service_started
+      hospital-primary:
+        condition: service_healthy
+      resource-primary:
+        condition: service_healthy
+      route-service:
+        condition: service_started
+      notification-service:
+        condition: service_started
+    networks:
+      - resilientresponse-net
+
+  # ── Orchestrator ──────────────────────────────────────────────────────────────
+  orchestrator:
+    build: ./orchestrator
+    container_name: resilientresponse-orchestrator
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    env_file:
+      - ./orchestrator/.env.example
+    depends_on:
+      mongo:
+        condition: service_healthy
+      service-registry:
+        condition: service_healthy
+    networks:
+      - resilientresponse-net
+
+  # ── Alert Service ─────────────────────────────────────────────────────────────
+  alert-service:
+    build: ./alert-service
+    container_name: resilientresponse-alert-service
+    restart: unless-stopped
+    ports:
+      - "8002:8002"
+    env_file:
+      - ./alert-service/.env.example
+    depends_on:
+      mongo:
+        condition: service_healthy
+      service-registry:
+        condition: service_healthy
+    networks:
+      - resilientresponse-net
+
+  # ── Classification Service ────────────────────────────────────────────────────
+  # Note: stateless — no MongoDB dependency, only registers with service-registry.
+  classification-service:
+    build: ./classification-service
+    container_name: resilientresponse-classification-service
+    restart: unless-stopped
+    ports:
+      - "8003:8003"
+    env_file:
+      - ./classification-service/.env.example
+    depends_on:
+      service-registry:
+        condition: service_healthy
+    networks:
+      - resilientresponse-net
+
+  # ── Hospital Service — PRIMARY instance ───────────────────────────────────────
+  hospital-primary:
+    build: ./hospital-service
+    container_name: resilientresponse-hospital-primary
+    restart: unless-stopped
+    ports:
+      - "8004:8004"
+    environment:
+      PORT: 8004
+      CORS_ORIGINS: "http://localhost:3000"
+      MONGO_URI: "mongodb://mongo:27017/resilientresponse"
+      MONGODB_DB: resilientresponse
+      SERVICE_NAME: hospital-service
+      SERVICE_INSTANCE_ID: hospital-primary
+      SERVICE_VERSION: "0.6.0"
+      SERVICE_ROLE: PRIMARY
+      SERVICE_BASE_URL: "http://hospital-primary:8004"
+      SERVICE_REGISTRY_URL: "http://service-registry:8008"
+    depends_on:
+      mongo:
+        condition: service_healthy
+      service-registry:
+        condition: service_healthy
+    networks:
+      - resilientresponse-net
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8004/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ── Hospital Service — BACKUP instance ────────────────────────────────────────
+  hospital-backup:
+    build: ./hospital-service
+    container_name: resilientresponse-hospital-backup
+    restart: unless-stopped
+    ports:
+      - "8014:8004"
+    environment:
+      PORT: 8004
+      CORS_ORIGINS: "http://localhost:3000"
+      MONGO_URI: "mongodb://mongo:27017/resilientresponse"
+      MONGODB_DB: resilientresponse
+      SERVICE_NAME: hospital-service
+      SERVICE_INSTANCE_ID: hospital-backup
+      SERVICE_VERSION: "0.6.0"
+      SERVICE_ROLE: BACKUP
+      SERVICE_BASE_URL: "http://hospital-backup:8004"
+      SERVICE_REGISTRY_URL: "http://service-registry:8008"
+    depends_on:
+      mongo:
+        condition: service_healthy
+      service-registry:
+        condition: service_healthy
+    networks:
+      - resilientresponse-net
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8004/health')\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ── Resource Service — PRIMARY instance ───────────────────────────────────────
+  resource-primary:
+    build: ./resource-service
+    container_name: resilientresponse-resource-primary
+    restart: unless-stopped
+    ports:
+      - "8005:8005"
+    environment:
+      PORT: 8005
+      CORS_ORIGINS: "http://localhost:3000"
+      MONGO_URI: "mongodb://mongo:27017/resilientresponse"
+      MONGODB_DB: resilientresponse
+      SERVICE_NAME: resource-service
+      SERVICE_INSTANCE_ID: resource-primary
+      SERVICE_VERSION: "0.6.0"
+      SERVICE_ROLE: PRIMARY
+      SERVICE_BASE_URL: "http://resource-primary:8005"
+      SERVICE_REGISTRY_URL: "http://service-registry:8008"
+    depends_on:
+      mongo:
+        condition: service_healthy
+      service-registry:
+        condition: service_healthy
+    networks:
+      - resilientresponse-net
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8005/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ── Resource Service — BACKUP instance ────────────────────────────────────────
+  resource-backup:
+    build: ./resource-service
+    container_name: resilientresponse-resource-backup
+    restart: unless-stopped
+    ports:
+      - "8015:8005"
+    environment:
+      PORT: 8005
+      CORS_ORIGINS: "http://localhost:3000"
+      MONGO_URI: "mongodb://mongo:27017/resilientresponse"
+      MONGODB_DB: resilientresponse
+      SERVICE_NAME: resource-service
+      SERVICE_INSTANCE_ID: resource-backup
+      SERVICE_VERSION: "0.6.0"
+      SERVICE_ROLE: BACKUP
+      SERVICE_BASE_URL: "http://resource-backup:8005"
+      SERVICE_REGISTRY_URL: "http://service-registry:8008"
+    depends_on:
+      mongo:
+        condition: service_healthy
+      service-registry:
+        condition: service_healthy
+    networks:
+      - resilientresponse-net
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8005/health')\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ── Route Service ─────────────────────────────────────────────────────────────
+  route-service:
+    build: ./route-service
+    container_name: resilientresponse-route-service
+    restart: unless-stopped
+    ports:
+      - "8006:8006"
+    env_file:
+      - ./route-service/.env.example
+    depends_on:
+      mongo:
+        condition: service_healthy
+      service-registry:
+        condition: service_healthy
+    networks:
+      - resilientresponse-net
+
+  # ── Notification Service ──────────────────────────────────────────────────────
+  notification-service:
+    build: ./notification-service
+    container_name: resilientresponse-notification-service
+    restart: unless-stopped
+    ports:
+      - "8007:8007"
+    env_file:
+      - ./notification-service/.env.example
+    depends_on:
+      mongo:
+        condition: service_healthy
+      service-registry:
+        condition: service_healthy
+    networks:
+      - resilientresponse-net
+
+  # ── Frontend ──────────────────────────────────────────────────────────────────
+  frontend:
+    build: ./frontend
+    container_name: resilientresponse-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: "http://localhost:8000"
+    depends_on:
+      - api-gateway
+    networks:
+      - resilientresponse-net
+
+  # ── Hospital Responder Portal ──────────────────────────────────────────────────
+  hospital-frontend:
+    build: ./responder-frontend
+    container_name: resilientresponse-hospital-frontend
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      RESPONDER_TYPE: "HOSPITAL"
+    depends_on:
+      - notification-service
+    networks:
+      - resilientresponse-net
+
+  # ── Police Responder Portal ────────────────────────────────────────────────────
+  police-frontend:
+    build: ./responder-frontend
+    container_name: resilientresponse-police-frontend
+    restart: unless-stopped
+    ports:
+      - "3002:3002"
+    environment:
+      RESPONDER_TYPE: "POLICE"
+    depends_on:
+      - notification-service
+    networks:
+      - resilientresponse-net
+
+volumes:
+  mongo_data:
+
+networks:
+  resilientresponse-net:
+    driver: bridge

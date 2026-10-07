@@ -1,0 +1,57 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html {
+  min-width: 1024px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  @apply text-gray-900;
+  min-height: 100vh;
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  background-color: #f3f6fa;
+  background-image: radial-gradient(#d9e2ec 0.7px, transparent 0.7px);
+  background-size: 18px 18px;
+}
+
+/* Keep the existing utility classes, but give the whole console a light visual system. */
+.bg-gray-950 { background-color: #f3f6fa !important; }
+.bg-gray-900 { background-color: #ffffff !important; }
+.bg-gray-800 { background-color: #eaf0f6 !important; }
+.bg-gray-700 { background-color: #dce6ef !important; }
+.bg-gray-800\/60 { background-color: rgb(234 240 246 / 0.76) !important; }
+.border-gray-800 { border-color: #d8e2ec !important; }
+.border-gray-700 { border-color: #c8d5e1 !important; }
+.text-white { color: #172334 !important; }
+.text-gray-100 { color: #1f2d3d !important; }
+.text-gray-300 { color: #435468 !important; }
+.text-gray-400 { color: #63758a !important; }
+.text-gray-500 { color: #718399 !important; }
+.text-gray-600 { color: #8192a6 !important; }
+.text-gray-700 { color: #53677d !important; }
+
+.bg-red-950 { background-color: #ffe5e5 !important; }
+.bg-orange-950 { background-color: #ffeddc !important; }
+.bg-blue-950 { background-color: #e2efff !important; }
+.bg-green-950 { background-color: #def7ea !important; }
+.bg-cyan-950 { background-color: #daf5f7 !important; }
+.bg-yellow-950 { background-color: #fff4cf !important; }
+.bg-purple-950 { background-color: #eee6ff !important; }
+
+.hover\:bg-gray-800:hover { background-color: #eaf0f6 !important; }
+.hover\:bg-gray-700:hover { background-color: #dce6ef !important; }
+.hover\:border-gray-700:hover { border-color: #aebfd0 !important; }
+
+button, input, select, textarea {
+  font: inherit;
+}
+
+::selection {
+  color: #ffffff;
+  background: #2563eb;
+}

@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ responder_type }} Emergency Portal</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 text-gray-900 font-sans">
+    <div class="max-w-4xl mx-auto p-6">
+        <h1 class="text-3xl font-bold mb-6 text-{{ 'blue' if responder_type == 'POLICE' else 'red' }}-600">
+            {{ responder_type }} Command Dashboard
+        </h1>
+
+        <div id="status" class="mb-4 text-sm text-gray-500">Connecting to alert stream...</div>
+        
+        <div id="alerts" class="space-y-6">
+            <!-- Alerts will be injected here -->
+        </div>
+    </div>
+
+    <script>
+        const responderType = "{{ responder_type }}";
+        const nsUrl = "{{ notification_service_url }}";
+        
+        const statusEl = document.getElementById('status');
+        const alertsEl = document.getElementById('alerts');
+
+        const eventSource = new EventSource(`${nsUrl}/api/notifications/stream`);
+
+        eventSource.onopen = function() {
+            statusEl.textContent = "Listening for live emergency alerts...";
+            statusEl.classList.add("text-green-600");
+        };
+
+        eventSource.onerror = function(err) {
+            statusEl.textContent = "Disconnected from alert stream. Reconnecting...";
+            statusEl.classList.remove("text-green-600");
+            statusEl.classList.add("text-red-600");
+        };
+
+        eventSource.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+            
+            // Only show alerts meant for this responder type
+            if (data.recipient_type !== responderType) {
+                return;
+            }
+
+            const alertDiv = document.createElement('div');
+            alertDiv.className = `p-6 bg-white rounded-lg shadow border-l-4 ${responderType === 'HOSPITAL' ? 'border-red-500' : 'border-blue-500'}`;
+            alertDiv.id = `alert-${data.id}`;
+
+            let resourceInputHtml = '';
+            if (responderType === 'HOSPITAL') {
+                resourceInputHtml = `
+                    <div class="mt-4">
+                        <label class="block text-sm font-medium">Available Beds:</label>
+                        <input type="number" id="beds-${data.id}" class="mt-1 block w-24 rounded-md border-gray-300 shadow-sm focus:border-red-500 focus:ring-red-500 sm:text-sm p-2 border">
+                        <label class="block text-sm font-medium mt-2">Available Ambulances:</label>
+                        <input type="number" id="ambulances-${data.id}" class="mt-1 block w-24 rounded-md border-gray-300 shadow-sm focus:border-red-500 focus:ring-red-500 sm:text-sm p-2 border">
+                    </div>
+                `;
+            } else {
+                resourceInputHtml = `
+                    <div class="mt-4">
+                        <label class="block text-sm font-medium">Available Units/Officers:</label>
+                        <input type="number" id="units-${data.id}" class="mt-1 block w-24 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border">
+                    </div>
+                `;
+            }
+
+            alertDiv.innerHTML = `
+                <div class="flex justify-between items-start">
+                    <div>
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-${data.priority === 'CRITICAL' ? 'red' : 'yellow'}-100 text-${data.priority === 'CRITICAL' ? 'red' : 'yellow'}-800">
+                            ${data.priority} PRIORITY
+                        </span>
+                        <h2 class="text-xl font-bold mt-2">New Incident Alert</h2>
+                        <p class="text-sm text-gray-500">Incident ID: ${data.incident_id}</p>
+                    </div>
+                    <div class="text-sm text-gray-400">${new Date().toLocaleTimeString()}</div>
+                </div>
+                <div class="mt-4 p-4 bg-gray-50 rounded text-gray-800 font-medium">
+                    ${data.message}
+                </div>
+                ${resourceInputHtml}
+                <div class="mt-4">
+                    <button onclick="submitReply('${data.id}')" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-${responderType === 'HOSPITAL' ? 'red' : 'blue'}-600 hover:bg-${responderType === 'HOSPITAL' ? 'red' : 'blue'}-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-${responderType === 'HOSPITAL' ? 'red' : 'blue'}-500">
+                        Acknowledge & Report Resources
+                    </button>
+                    <span id="feedback-${data.id}" class="ml-3 text-sm text-green-600 hidden">Response recorded successfully!</span>
+                </div>
+            `;
+            
+            alertsEl.prepend(alertDiv);
+        };
+
+        async function submitReply(notificationId) {
+            let payload = {};
+            if (responderType === 'HOSPITAL') {
+                payload.available_beds = document.getElementById(`beds-${notificationId}`).value || 0;
+                payload.available_ambulances = document.getElementById(`ambulances-${notificationId}`).value || 0;
+            } else {
+                payload.available_units = document.getElementById(`units-${notificationId}`).value || 0;
+            }
+
+            try {
+                const response = await fetch(`${nsUrl}/api/notifications/${notificationId}/reply`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                
+                if(response.ok) {
+                    const btn = document.querySelector(`#alert-${notificationId} button`);
+                    btn.disabled = true;
+                    btn.classList.add('opacity-50', 'cursor-not-allowed');
+                    document.getElementById(`feedback-${notificationId}`).classList.remove('hidden');
+                }
+            } catch (e) {
+                alert("Failed to submit response: " + e);
+            }
+        }
+    </script>
+</body>
+</html>
